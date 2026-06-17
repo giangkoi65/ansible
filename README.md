@@ -1,3 +1,4 @@
+```text
 ansible/                           # repo
 ├── .github/workflows/deploy.yml   # Định nghĩa pipeline tự động hóa của GitHub Actions
 ├── scripts/                       # Chứa các kịch bản lệnh bổ trợ vận hành hệ thống
@@ -24,3 +25,4 @@ ansible/                           # repo
             └── templates/         # Chứa file cấu hình mẫu Nginx bàn giao cho Salt quản lý
                 ├── nginx.conf.j2  # Bản mẫu cấu hình lõi hệ thống cho dịch vụ Nginx
                 └── site.conf.j2   # Bản mẫu cấu hình Virtual Host chạy website (Port 80)
+```

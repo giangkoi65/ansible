@@ -1,4 +1,7 @@
 # Được cấu hình tự động bởi Ansible
+fileserver_backend:
+  - roots
+
 file_roots:
   base:
     - {{ salt_file_roots }}
@@ -9,6 +12,3 @@ pillar_roots:
 
 master_sign_pubkey: True
 master_sign_key_name: {{ salt_master_sign_key_name }}
-
-gitfs_update_interval: 60
-git_pillar_update_interval: 60

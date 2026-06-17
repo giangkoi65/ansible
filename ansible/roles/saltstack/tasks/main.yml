@@ -4,7 +4,7 @@
 # ==============================================================================
 - name: Danger Zone - Completely purge old SaltStack installation for fresh deployment
   block:
-    - name: Stop and disable Salt services if they exist
+    - name: Stop and disable Salt and Nginx services if they exist
       systemd:
         name: "{{ item }}"
         state: stopped
@@ -12,6 +12,7 @@
       loop:
         - salt-master
         - salt-minion
+        - nginx
       ignore_errors: yes
 
     - name: Purge SaltStack packages
@@ -33,6 +34,8 @@
         - /etc/apt/sources.list.d/salt.list
         - /etc/apt/keyrings/salt-archive-keyring-2023.asc
         - /etc/apt/keyrings/salt-archive-keyring-2023.gpg
+        - /etc/nginx
+        - /var/www/html
   tags: [never, purge_salt]
 
 # ==============================================================================
@@ -67,10 +70,7 @@
   block:
     - name: Install salt-master and GitFS dependencies via apt
       apt:
-        name:
-          - salt-master
-          - git
-          - python3-git
+        name: salt-master
         state: present
         update_cache: yes
 
@@ -352,6 +352,12 @@
 # ==============================================================================
 - name: Execute Infrastructure Reconfiguration
   block:
+    - name: Remove legacy GitFS configurations to avoid conflicts
+      file:
+        path: /etc/salt/master.d/gitfs.conf
+        state: absent
+      when: is_master | default(false)
+
     - name: Update Master Core Configuration dynamically
       template:
         src: master.j2
@@ -403,12 +409,21 @@
     group: root
     mode: '0755'
   loop:
-    - { src: '../salt_files/', dest: '/srv/salt/' }
-    - { src: '../website/', dest: '/srv/salt/website_src/' } # Đẩy luôn code web ở root lên Master làm tài nguyên cho Salt
+    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/salt/' }
+    - { src: "{{ playbook_dir }}/pillar_files/", dest: '/srv/pillar/' }
+    - { src: "{{ playbook_dir }}/../website/", dest: '/srv/salt/website_src/' }
   when: is_master | default(false)
 
+# BƯỚC VÁ LỖI (BẮT BUỘC PHẢI CHẠY TRƯỚC KHI DEPLOY NGINX)
+- name: Fix missing Nginx default configs on Minion if package exists but dir was purged
+  shell: |
+    if dpkg -s nginx >/dev/null 2>&1 && [ ! -f /etc/nginx/mime.types ]; then
+      apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" nginx-common -y
+    fi
+  when: is_minion | default(false)
+
+# BƯỚC KÍCH HOẠT: Chỉ gọi Salt apply khi Minion đã được vá cấu hình nền xong xuôi
 - name: Trigger Salt Master 1 to deploy Nginx and Website on Minion
   command: salt '{{ salt_minion_id }}' state.apply nginx
   delegate_to: master-node-1
-  run_once: true
   when: is_minion | default(false)

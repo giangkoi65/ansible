@@ -13,6 +13,7 @@ nginx_main_config:
     - name: /etc/nginx/nginx.conf
     - source: salt://nginx/templates/nginx.conf.j2
     - template: jinja
+    - makedirs: True
     - user: root
     - group: root
     - mode: '0644'
@@ -27,6 +28,7 @@ nginx_site_config:
     - name: /etc/nginx/sites-available/default
     - source: salt://nginx/templates/site.conf.j2
     - template: jinja
+    - makedirs: True
     - user: root
     - group: root
     - mode: '0644'
@@ -39,6 +41,7 @@ nginx_site_enable:
     - name: /etc/nginx/sites-enabled/default
     - target: /etc/nginx/sites-available/default
     - force: True
+    - makedirs: True
     - require:
       - file: nginx_site_config
 

@@ -1,0 +1,19 @@
+name: Deploy Infrastructure via Ansible & SaltStack
+
+on:
+  push:
+    branches:
+      - main # Hoặc master tùy theo tên branch chính của bạn
+
+jobs:
+  ansible-deploy:
+    runs-on: self-hosted # Ép GitHub Actions chạy trên con Runner ta cài ở master-node-1
+
+    steps:
+      - name: Checkout Code from GitHub
+        uses: actions/checkout@v4
+
+      - name: Run Ansible Playbook to Setup Infrastructure & Nginx
+        run: |
+          cd ansible/
+          ansible-playbook -i inventory.ini site.yml --tags "deploy_master,deploy_minion,app_deploy"

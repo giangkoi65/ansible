@@ -415,7 +415,7 @@
     group: root
     mode: '0755'
   loop:
-    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/' }
+    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/salt/' }
     - { src: "{{ playbook_dir }}/../website/", dest: '/srv/salt/website_src/' }
   when: is_master | default(false)
 

@@ -1,2 +1,0 @@
-nginx:
-  port: 80

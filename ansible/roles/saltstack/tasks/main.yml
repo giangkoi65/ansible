@@ -401,6 +401,12 @@
 # ==============================================================================
 # KHỐI 5: ĐỒNG BỘ CẤU HÌNH LOCAL VÀ KÍCH HOẠT QUẢN TRỊ ỨNG DỤNG VIA SALT
 # ==============================================================================
+- name: Anti-Drift Step - Purge old state directories on Masters before sync
+  file:
+    path: /srv/salt/
+    state: absent
+  when: is_master | default(false)
+
 - name: Sync Local Salt States and Website Source to Salt Masters
   copy:
     src: "{{ item.src }}"
@@ -409,8 +415,7 @@
     group: root
     mode: '0755'
   loop:
-    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/salt/' }
-    - { src: "{{ playbook_dir }}/pillar_files/", dest: '/srv/pillar/' }
+    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/' }
     - { src: "{{ playbook_dir }}/../website/", dest: '/srv/salt/website_src/' }
   when: is_master | default(false)
 

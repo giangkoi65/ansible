@@ -26,4 +26,6 @@ ansible/                           # repo
                 ├── nginx.conf.j2  # Bản mẫu cấu hình lõi hệ thống cho dịch vụ Nginx
                 └── site.conf.j2   # Bản mẫu cấu hình Virtual Host chạy website (Port 80)
 ```
+
+Flow chạy
 ![Giao diện hệ thống](./flow.png)

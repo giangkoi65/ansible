@@ -1,0 +1,13 @@
+# Được cấu hình tự động bởi Ansible
+master:
+{% for ip in salt_master_ips %}
+  - {{ ip }}
+{% endfor %}
+
+master_type: str
+verify_master_pubkey_sign: {{ salt_verify_master_pubkey_sign | lower }}
+master_sign_key_name: {{ salt_master_sign_key_name }}
+{% if salt_always_verify_signature | bool %}
+always_verify_signature: True
+{% endif %}
+id: {{ salt_minion_id }}

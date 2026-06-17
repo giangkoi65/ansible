@@ -1,0 +1,6 @@
+---
+- name: Deploy and Manage SaltStack Infrastructure
+  hosts: all
+  become: yes
+  roles:
+    - saltstack

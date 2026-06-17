@@ -1,0 +1,21 @@
+# Được cấu hình tự động bởi SaltStack Local Mode
+server {
+    listen 80;
+    listen [::]:80;
+
+    # Nhận mọi request gửi tới IP của Minion này
+    server_name _;
+
+    # Đường dẫn tới thư mục chứa code của bạn
+    root /var/www/my_website;
+    index index.html index.htm;
+
+    location / {
+        # Kiểm tra file có tồn tại không, nếu không trả về lỗi 404
+        try_files $uri $uri/ =404;
+    }
+
+    # Custom log độc lập cho website này dễ debug
+    access_log /var/log/nginx/mysite_access.log;
+    error_log /var/log/nginx/mysite_error.log;
+}

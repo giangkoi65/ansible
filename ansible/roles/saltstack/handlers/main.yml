@@ -1,0 +1,10 @@
+---
+- name: Restart salt-master
+  systemd:
+    name: salt-master
+    state: restarted
+
+- name: Restart salt-minion
+  systemd:
+    name: salt-minion
+    state: restarted

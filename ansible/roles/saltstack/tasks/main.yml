@@ -1,0 +1,441 @@
+---
+# ==============================================================================
+# KHỐI TIỀN XỬ LÝ: DỌN SẠCH CŨ ĐỂ CÀI MỚI (CHỈ DÙNG KHI RESET HỆ THỐNG)
+# ==============================================================================
+- name: Danger Zone - Completely purge old SaltStack installation for fresh deployment
+  block:
+    - name: Stop and disable Salt services if they exist
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - salt-master
+        - salt-minion
+      ignore_errors: yes
+
+    - name: Purge SaltStack packages
+      apt:
+        name:
+          - salt-master
+          - salt-minion
+        state: absent
+        purge: yes
+      ignore_errors: yes
+
+    - name: Wipe out all old configuration and PKI keys directory
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/salt
+        - /var/cache/salt
+        - /etc/apt/sources.list.d/salt.list
+        - /etc/apt/keyrings/salt-archive-keyring-2023.asc
+        - /etc/apt/keyrings/salt-archive-keyring-2023.gpg
+  tags: [never, purge_salt]
+
+# ==============================================================================
+# KHỐI 1: KHỞI TẠO REPOSITORY CHÍNH THỨC (DÙNG CHUNG CHO CẢ MASTER VÀ MINION)
+# ==============================================================================
+- name: Setup Salt Project Official Repository
+  block:
+    - name: Ensure keyrings directory exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Salt official GPG key
+      get_url:
+        url: https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public
+        dest: /etc/apt/keyrings/salt-archive-keyring-2023.asc
+        mode: '0644'
+
+    - name: Add Salt repository to sources list
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/salt-archive-keyring-2023.asc arch=amd64] https://packages.broadcom.com/artifactory/saltproject-deb/ stable main"
+        state: present
+        filename: salt
+        update_cache: yes
+  tags: [deploy_master, deploy_minion]
+
+# ==============================================================================
+# KHỐI 2: DEPLOY SALT MASTER
+# ==============================================================================
+- name: Execute Salt Master Deployment
+  block:
+    - name: Install salt-master and GitFS dependencies via apt
+      apt:
+        name:
+          - salt-master
+          - git
+          - python3-git
+        state: present
+        update_cache: yes
+
+    - name: Generate Salt Master configuration from Jinja2 template
+      template:
+        src: master.j2
+        dest: /etc/salt/master
+        mode: '0644'
+      notify: Restart salt-master
+
+    # SỬA TẠI ĐÂY: Cấu hình chuẩn ext_pillar tránh lỗi môi trường
+    - name: Configure GitFS fileserver and external pillar
+      copy:
+        dest: /etc/salt/master.d/gitfs.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          git_pillar_update_interval: 0
+
+          fileserver_backend:
+            - git
+
+          gitfs_provider: gitpython
+
+          gitfs_remotes:
+            - https://github.com/giangkoi65/saltstack:
+              - root: salt
+          ext_pillar:
+            - git:
+              - main https://github.com/giangkoi65/saltstack:
+                - root: pillar
+      register: master_gitfs_config # <--- Lưu lại trạng thái thay đổi cấu hình GitFS
+      notify: Restart salt-master
+
+    - name: Create core GitOps directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ salt_file_roots }}"
+        - "{{ salt_pillar_roots }}"
+
+    - name: Ensure salt-master service is enabled and running
+      systemd:
+        name: salt-master
+        state: started
+        enabled: yes
+  when: is_master | default(false)
+  tags: [deploy_master]
+
+# ==============================================================================
+# KHỐI 2.5: TẠO + ĐỒNG BỘ MASTER SIGNING KEY
+# ==============================================================================
+- name: Prepare Salt master signing key on node1 and sync to node2
+  block:
+    - name: Ensure Salt PKI directory exists on master
+      file:
+        path: /etc/salt/pki/master
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Generate Salt master signing private key if missing
+      command: >
+        openssl genrsa
+        -out /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pem
+        4096
+      args:
+        creates: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pem
+      register: sign_key_priv_gen # <--- Đánh dấu nếu có tạo mới key
+      no_log: true
+
+    - name: Generate Salt master signing public key if missing
+      command: >
+        openssl rsa
+        -in /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pem
+        -pubout
+        -out /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pub
+      args:
+        creates: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pub
+      register: sign_key_pub_gen # <--- Đánh dấu nếu có tạo mới key
+
+    - name: Fix permissions on signing keys
+      file:
+        path: "/etc/salt/pki/master/{{ item.file }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { file: "{{ salt_master_sign_key_name }}.pem", mode: "0600" }
+        - { file: "{{ salt_master_sign_key_name }}.pub", mode: "0644" }
+
+    - name: Create local staging dir on controller
+      delegate_to: localhost
+      run_once: true
+      become: false
+      file:
+        path: /tmp/salt-master-sign-sync
+        state: directory
+        mode: '0700'
+
+    - name: Fetch master signing private key from node1 to controller
+      fetch:
+        src: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pem
+        dest: /tmp/salt-master-sign-sync/{{ salt_master_sign_key_name }}.pem
+        flat: true
+      delegate_to: master-node-1
+      run_once: true
+      no_log: true
+
+    - name: Fetch master signing public key from node1 to controller
+      fetch:
+        src: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pub
+        dest: /tmp/salt-master-sign-sync/{{ salt_master_sign_key_name }}.pub
+        flat: true
+      delegate_to: master-node-1
+      run_once: true
+
+    - name: Copy master signing private key to node2
+      copy:
+        src: /tmp/salt-master-sign-sync/{{ salt_master_sign_key_name }}.pem
+        dest: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pem
+        owner: root
+        group: root
+        mode: '0600'
+      delegate_to: master-node-2
+      run_once: true
+      register: copy_priv_to_node2
+      no_log: true
+
+    - name: Copy master signing public key to node2
+      copy:
+        src: /tmp/salt-master-sign-sync/{{ salt_master_sign_key_name }}.pub
+        dest: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pub
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: master-node-2
+      run_once: true
+      register: copy_pub_to_node2
+
+    # TỐI ƯU TẠI ĐÂY: Chỉ restart Master nếu có sự thay đổi thực sự về Key hoặc File cấu hình GitFS
+    - name: Restart salt-master on node1
+      systemd:
+        name: salt-master
+        state: restarted
+      delegate_to: master-node-1
+      run_once: true
+      when: sign_key_priv_gen.changed or sign_key_pub_gen.changed or (master_gitfs_config.changed | default(false))
+
+    - name: Restart salt-master on node2
+      systemd:
+        name: salt-master
+        state: restarted
+      delegate_to: master-node-2
+      run_once: true
+      when: copy_priv_to_node2.changed or copy_pub_to_node2.changed or (master_gitfs_config.changed | default(false))
+  when:
+    - is_master | default(false)
+    - inventory_hostname == 'master-node-1'
+  tags: [deploy_master, deploy_minion, sync_master_sign_keys]
+
+# ==============================================================================
+# KHỐI 3: DEPLOY SALT MINION
+# ==============================================================================
+- name: Execute Salt Minion Deployment
+  block:
+    - name: Install salt-minion package via apt
+      apt:
+        name: salt-minion
+        state: present
+      register: salt_minion_install # <--- BƯỚC 1: Lưu lại trạng thái cài đặt
+
+    - name: Clean up apt auto-start orphan processes safely
+      shell: |
+        systemctl stop salt-minion
+        systemctl kill -s SIGKILL salt-minion
+        systemctl reset-failed salt-minion
+      when: salt_minion_install.changed # <--- BƯỚC 2: Chỉ chạy duy nhất ở lần đầu tiên cài đặt
+      failed_when: false
+      changed_when: false
+
+    - name: Generate Salt Minion configuration from Jinja2 template
+      template:
+        src: minion.j2
+        dest: /etc/salt/minion
+        mode: '0644'
+      register: minion_config # <--- Lưu trạng thái thay đổi file config
+
+    - name: Fetch master signing public key to controller
+      fetch:
+        src: /etc/salt/pki/master/{{ salt_master_sign_key_name }}.pub
+        dest: /tmp/salt-master-sign-sync/{{ salt_master_sign_key_name }}.pub
+        flat: true
+      delegate_to: master-node-1
+      run_once: true
+
+    - name: Ensure salt-minion PKI directory exists
+      file:
+        path: /etc/salt/pki/minion
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy master signing public key to minion
+      copy:
+        src: /tmp/salt-master-sign-sync/{{ salt_master_sign_key_name }}.pub
+        dest: /etc/salt/pki/minion/{{ salt_master_sign_key_name }}.pub
+        owner: root
+        group: root
+        mode: '0644'
+      register: minion_key # <--- Lưu trạng thái thay đổi file key
+
+    # BƯỚC 3: Khởi động thông minh dựa trên thay đổi thực tế
+    - name: Ensure salt-minion is running and restarted if config changed
+      systemd:
+        name: salt-minion
+        state: "{{ 'restarted' if (salt_minion_install.changed or minion_config.changed or minion_key.changed) else 'started' }}"
+        enabled: yes
+
+    - name: Wait for Salt Minion to stabilize
+      pause:
+        seconds: 5
+
+  when: is_minion | default(false)
+  tags: [deploy_minion]
+
+# ==============================================================================
+# KHỐI 3.5: ACCEPT MINION KEY TRÊN CẢ HAI MASTER (AN TOÀN KHI CHẠY LẠI)
+# ==============================================================================
+- name: Accept Salt minion key on both masters and verify ping
+  block:
+    # --- BƯỚC 1: KIỂM TRA XEM KEY ĐÃ ĐƯỢC DUYỆT TỪ TRƯỚC CHƯA ---
+    - name: Check accepted keys on master-node-1
+      command: salt-key -l accepted
+      register: accepted_keys_master_1
+      changed_when: false
+      delegate_to: master-node-1
+
+    - name: Check accepted keys on master-node-2
+      command: salt-key -l accepted
+      register: accepted_keys_master_2
+      changed_when: false
+      delegate_to: master-node-2
+
+    # --- BƯỚC 2: CHỈ CHỜ VÀ ACCEPT NẾU KEY CHƯA NẰM TRONG DANH SÁCH ACCEPTED ---
+    - name: Wait until minion key appears on master-node-1
+      command: salt-key -L
+      register: salt_key_list_master_1
+      changed_when: false
+      retries: 20
+      delay: 3
+      until: salt_minion_id in salt_key_list_master_1.stdout
+      delegate_to: master-node-1
+      when: salt_minion_id not in accepted_keys_master_1.stdout
+
+    - name: Accept minion key on master-node-1
+      command: salt-key -a {{ salt_minion_id }} -y
+      delegate_to: master-node-1
+      when: salt_minion_id not in accepted_keys_master_1.stdout
+
+    - name: Wait until minion key appears on master-node-2
+      command: salt-key -L
+      register: salt_key_list_master_2
+      changed_when: false
+      retries: 20
+      delay: 3
+      until: salt_minion_id in salt_key_list_master_2.stdout
+      delegate_to: master-node-2
+      when: salt_minion_id not in accepted_keys_master_2.stdout
+
+    - name: Accept minion key on master-node-2
+      command: salt-key -a {{ salt_minion_id }} -y
+      delegate_to: master-node-2
+      when: salt_minion_id not in accepted_keys_master_2.stdout
+
+    # --- BƯỚC 3: KIỂM TRA PING (LUÔN CHẠY ĐỂ XÁC MINH SỐNG CÒN) ---
+    - name: Verify minion ping from master-node-1
+      command: salt {{ salt_minion_id }} test.ping
+      register: ping_master_1
+      changed_when: false
+      retries: 20
+      delay: 3
+      until: "'True' in ping_master_1.stdout"
+      delegate_to: master-node-1
+
+    - name: Verify minion ping from master-node-2
+      command: salt {{ salt_minion_id }} test.ping
+      register: ping_master_2
+      changed_when: false
+      retries: 20
+      delay: 3
+      until: "'True' in ping_master_2.stdout"
+      delegate_to: master-node-2
+  when: is_minion | default(false)
+  tags: [deploy_minion, accept_minion_key]
+
+
+# ==============================================================================
+# KHỐI 4: RECONFIGURE (CẬP NHẬT CẤU HÌNH ĐỘNG KHÔNG LÀM MẤT DỮ LIỆU)
+# ==============================================================================
+- name: Execute Infrastructure Reconfiguration
+  block:
+    - name: Update Master Core Configuration dynamically
+      template:
+        src: master.j2
+        dest: /etc/salt/master
+        mode: '0644'
+      when: is_master | default(false)
+      notify: Restart salt-master
+
+    - name: Update GitFS and External Pillar Configuration dynamically
+      copy:
+        dest: /etc/salt/master.d/gitfs.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          fileserver_backend:
+            - git
+
+          gitfs_remotes:
+            - https://github.com/giangkoi65/saltstack:
+              - root: salt
+              - base: main
+
+          ext_pillar:
+            - git:
+              - main https://github.com/giangkoi65/saltstack:
+                - root: salt/pillar
+      when: is_master | default(false)
+      notify: Restart salt-master
+
+    - name: Update Minion Core Configuration dynamically
+      template:
+        src: minion.j2
+        dest: /etc/salt/minion
+        mode: '0644'
+      when: is_minion | default(false)
+      notify: Restart salt-minion
+
+    - name: Force immediate restart of services to apply configuration
+      meta: flush_handlers
+
+    - name: Post-Reconfigure Verification - Verification Ping from Master 1
+      command: salt {{ salt_minion_id }} test.ping
+      register: reconfig_ping_1
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: "'True' in reconfig_ping_1.stdout"
+      delegate_to: master-node-1
+      when: is_minion | default(false)
+
+    - name: Post-Reconfigure Verification - Verification Ping from Master 2
+      command: salt {{ salt_minion_id }} test.ping
+      register: reconfig_ping_2
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: "'True' in reconfig_ping_2.stdout"
+      delegate_to: master-node-2
+      when: is_minion | default(false)
+  tags: [reconfigure]

@@ -1,0 +1,14 @@
+---
+# IP của cụm Salt Master (Dùng dạng danh sách mảng để hỗ trợ Active-Active)
+salt_master_ips:
+  - "192.168.15.129"
+  - "192.168.15.130"
+
+salt_file_roots: "/srv/salt"
+salt_pillar_roots: "/srv/pillar"
+salt_minion_id: "{{ inventory_hostname }}"
+
+# master ký auth-reply, minion verify signature
+salt_master_sign_key_name: "master_sign"
+salt_verify_master_pubkey_sign: true
+salt_always_verify_signature: false

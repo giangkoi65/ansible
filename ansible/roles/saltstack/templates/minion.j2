@@ -11,3 +11,10 @@ master_sign_key_name: {{ salt_master_sign_key_name }}
 always_verify_signature: True
 {% endif %}
 id: {{ salt_minion_id }}
+schedule:
+  chong_drift_nginx:
+    function: state.apply
+    args:
+      - nginx
+    minutes: 5s
+    splay: 60

@@ -1,79 +1,72 @@
 # ==============================================================================
-# BƯỚC 1: CÀI ĐẶT PACKAGE NGINX
+# STATE 1: CÀI ĐẶT GÓI NGINX
 # ==============================================================================
-install_nginx:
+nginx_package:
   pkg.installed:
     - name: nginx
 
 # ==============================================================================
-# BƯỚC 2: QUẢN LÝ CÁC FILE CẤU HÌNH (SỬ DỤNG JINJA2 CỦA SALT)
+# STATE 2: QUẢN LÝ FILE CẤU HÌNH TỔNG (NGINX.CONF) VIA JINJA2
 # ==============================================================================
-# Cấu hình tổng của Nginx
-configure_main_nginx:
+nginx_main_config:
   file.managed:
     - name: /etc/nginx/nginx.conf
     - source: salt://nginx/templates/nginx.conf.j2
     - template: jinja
     - user: root
     - group: root
-    - mode: 644
+    - mode: '0644'
     - require:
-      - pkg: install_nginx
+      - pkg: nginx_package
 
-# Cấu hình riêng cho Website (Virtual Host)
-configure_site_nginx:
+# ==============================================================================
+# STATE 3: QUẢN LÝ FILE VIRTUAL HOST MẶC ĐỊNH
+# ==============================================================================
+nginx_site_config:
   file.managed:
-    - name: /etc/nginx/sites-available/mysite.conf
+    - name: /etc/nginx/sites-available/default
     - source: salt://nginx/templates/site.conf.j2
     - template: jinja
     - user: root
     - group: root
-    - mode: 644
+    - mode: '0644'
     - require:
-      - pkg: install_nginx
+      - pkg: nginx_package
 
-# ==============================================================================
-# BƯỚC 3: KÍCH HOẠT VIRTUAL HOST VÀ DỌN DẸP CONFIG CŨ
-# ==============================================================================
-# Tạo symlink từ sites-available sang sites-enabled
-enable_site_nginx:
+# Sửa lỗi tạo symlink nếu Nginx trên hệ thống chưa tự kích hoạt sites-enabled
+nginx_site_enable:
   file.symlink:
-    - name: /etc/nginx/sites-enabled/mysite.conf
-    - target: /etc/nginx/sites-available/mysite.conf
+    - name: /etc/nginx/sites-enabled/default
+    - target: /etc/nginx/sites-available/default
     - force: True
     - require:
-      - file: configure_site_nginx
-
-# Xóa bỏ cấu hình default của Nginx để tránh tranh chấp port 80
-remove_default_site:
-  file.absent:
-    - name: /etc/nginx/sites-enabled/default
+      - file: nginx_site_config
 
 # ==============================================================================
-# BƯỚC 4: ĐỒNG BỘ SOURCE CODE WEBSITE (ĐỆ QUY TOÀN BỘ THƯ MỤC)
+# STATE 4: ĐỒNG BỘ SOURCE CODE WEBSITE & CHỐNG DRIFT MÃ NGUỒN
 # ==============================================================================
-# Vì Ansible đã ném website vào /srv/salt/website_src/ nên Salt gọi qua salt://website_src
-deploy_website_source:
+# Giải thích: Ansible đẩy code vào `/srv/salt/website_src/` trên Master.
+# Salt dùng gốc 'salt://' để kéo toàn bộ cấu trúc thư mục này về Minion.
+website_source_sync:
   file.recurse:
-    - name: /var/www/my_website
+    - name: /var/www/html
     - source: salt://website_src
+    - clean: True  # CHỐNG DRIFT: Tự động xóa file thừa ở Minion nếu trên Git không có
     - user: www-data
     - group: www-data
-    - dir_mode: 755
-    - file_mode: 644
-    - makedirs: True
+    - dir_mode: '0755'
+    - file_mode: '0644'
     - require:
-      - pkg: install_nginx
+      - pkg: nginx_package
 
 # ==============================================================================
-# BƯỚC 5: ĐẢM BẢO DỊCH VỤ LUÔN CHẠY VÀ TỰ RELOAD KHI CÓ THAY ĐỔI
+# STATE 5: GIÁM SÁT VÀ KHỞI ĐỘNG DỊCH VỤ
 # ==============================================================================
-nginx_service_running:
+nginx_service_control:
   service.running:
     - name: nginx
     - enable: True
     - watch:
-      - file: configure_main_nginx
-      - file: configure_site_nginx
-      - file: remove_default_site
-      - file: deploy_website_source
+      - file: nginx_main_config
+      - file: nginx_site_config
+      - file: website_source_sync

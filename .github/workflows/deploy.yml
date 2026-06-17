@@ -1,19 +1,22 @@
-name: Deploy Infrastructure via Ansible & SaltStack
+name: CI/CD Pipeline - Minimal Ansible Deploy
 
 on:
   push:
     branches:
-      - main # Hoặc master tùy theo tên branch chính của bạn
+      - main
+      - master
 
 jobs:
   ansible-deploy:
-    runs-on: self-hosted # Ép GitHub Actions chạy trên con Runner ta cài ở master-node-1
+    name: Trigger Local Ansible Playbook
+    runs-on: self-hosted
 
     steps:
-      - name: Checkout Code from GitHub
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Run Ansible Playbook to Setup Infrastructure & Nginx
+      # Runner sẽ dùng luôn Python và Ansible đã cài sẵn trên máy local của bạn
+      - name: Execute Ansible Playbook
         run: |
-          cd ansible/
-          ansible-playbook -i inventory.ini site.yml --tags "deploy_master,deploy_minion,app_deploy"
+          cd ansible
+          ansible-playbook -i inventory.ini site.yml

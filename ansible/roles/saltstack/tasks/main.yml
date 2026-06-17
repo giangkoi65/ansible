@@ -81,31 +81,6 @@
         mode: '0644'
       notify: Restart salt-master
 
-    # SỬA TẠI ĐÂY: Cấu hình chuẩn ext_pillar tránh lỗi môi trường
-    - name: Configure GitFS fileserver and external pillar
-      copy:
-        dest: /etc/salt/master.d/gitfs.conf
-        owner: root
-        group: root
-        mode: '0644'
-        content: |
-          git_pillar_update_interval: 0
-
-          fileserver_backend:
-            - git
-
-          gitfs_provider: gitpython
-
-          gitfs_remotes:
-            - https://github.com/giangkoi65/saltstack:
-              - root: salt
-          ext_pillar:
-            - git:
-              - main https://github.com/giangkoi65/saltstack:
-                - root: pillar
-      register: master_gitfs_config # <--- Lưu lại trạng thái thay đổi cấu hình GitFS
-      notify: Restart salt-master
-
     - name: Create core GitOps directories
       file:
         path: "{{ item }}"
@@ -215,14 +190,13 @@
       run_once: true
       register: copy_pub_to_node2
 
-    # TỐI ƯU TẠI ĐÂY: Chỉ restart Master nếu có sự thay đổi thực sự về Key hoặc File cấu hình GitFS
     - name: Restart salt-master on node1
       systemd:
         name: salt-master
         state: restarted
       delegate_to: master-node-1
       run_once: true
-      when: sign_key_priv_gen.changed or sign_key_pub_gen.changed or (master_gitfs_config.changed | default(false))
+      when: sign_key_priv_gen.changed or sign_key_pub_gen.changed | default(false)
 
     - name: Restart salt-master on node2
       systemd:
@@ -230,7 +204,7 @@
         state: restarted
       delegate_to: master-node-2
       run_once: true
-      when: copy_priv_to_node2.changed or copy_pub_to_node2.changed or (master_gitfs_config.changed | default(false))
+      when: copy_priv_to_node2.changed or copy_pub_to_node2.changed | default(false)
   when:
     - is_master | default(false)
     - inventory_hostname == 'master-node-1'
@@ -386,28 +360,6 @@
       when: is_master | default(false)
       notify: Restart salt-master
 
-    - name: Update GitFS and External Pillar Configuration dynamically
-      copy:
-        dest: /etc/salt/master.d/gitfs.conf
-        owner: root
-        group: root
-        mode: '0644'
-        content: |
-          fileserver_backend:
-            - git
-
-          gitfs_remotes:
-            - https://github.com/giangkoi65/saltstack:
-              - root: salt
-              - base: main
-
-          ext_pillar:
-            - git:
-              - main https://github.com/giangkoi65/saltstack:
-                - root: salt/pillar
-      when: is_master | default(false)
-      notify: Restart salt-master
-
     - name: Update Minion Core Configuration dynamically
       template:
         src: minion.j2
@@ -439,3 +391,24 @@
       delegate_to: master-node-2
       when: is_minion | default(false)
   tags: [reconfigure]
+
+# ==============================================================================
+# KHỐI 5: ĐỒNG BỘ CẤU HÌNH LOCAL VÀ KÍCH HOẠT QUẢN TRỊ ỨNG DỤNG VIA SALT
+# ==============================================================================
+- name: Sync Local Salt States and Website Source to Salt Masters
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - { src: '../salt_files/', dest: '/srv/salt/' }
+    - { src: '../website/', dest: '/srv/salt/website_src/' } # Đẩy luôn code web ở root lên Master làm tài nguyên cho Salt
+  when: is_master | default(false)
+
+- name: Trigger Salt Master 1 to deploy Nginx and Website on Minion
+  command: salt '{{ salt_minion_id }}' state.apply nginx
+  delegate_to: master-node-1
+  run_once: true
+  when: is_minion | default(false)

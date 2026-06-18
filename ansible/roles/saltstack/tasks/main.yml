@@ -415,7 +415,7 @@
     group: root
     mode: '0755'
   loop:
-    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/salt/' }
+    - { src: "{{ playbook_dir }}/salt_files/", dest: '/srv/salt' }
     - { src: "{{ playbook_dir }}/../website/", dest: '/srv/salt/website_src/' }
   when: is_master | default(false)
 
@@ -427,8 +427,25 @@
     fi
   when: is_minion | default(false)
 
-# BƯỚC KÍCH HOẠT: Chỉ gọi Salt apply khi Minion đã được vá cấu hình nền xong xuôi
-- name: Trigger Salt Master 1 to deploy Nginx and Website on Minion
-  command: salt '{{ salt_minion_id }}' state.apply nginx
-  delegate_to: master-node-1
+# BƯỚC KÍCH HOẠT (ĐÃ TỐI ƯU HÓA CƠ CHẾ CHỊU LỖI HIGH-AVAILABILITY)
+- name: High-Availability Salt Trigger Deployment
+  block:
+    - name: "[INFO] Attemping to trigger deployment via SALT-MASTER-1"
+      debug:
+        msg: "CI/CD Pipeline đang gọi trực tiếp máy 'master-node-1' để thực thi lệnh 'salt state.apply'"
+
+    - name: Trigger Salt Master 1 to deploy Nginx and Website on Minion
+      command: "salt '{{ salt_minion_id }}' state.apply nginx"
+      delegate_to: master-node-1
+
+  rescue:
+    - name: "[WARNING] SALT-MASTER-1 is DOWN! Switching to Failover Node"
+      debug:
+        msg: "Master 1 không phản hồi hoặc gặp sự cố. Tự động chuyển hướng CI/CD sang 'master-node-2'..."
+
+    - name: Trigger Salt Master 2 to deploy Nginx and Website on Minion (Failover)
+      command: "salt '{{ salt_minion_id }}' state.apply nginx"
+      delegate_to: master-node-2
+
+  run_once: true
   when: is_minion | default(false)

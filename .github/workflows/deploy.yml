@@ -15,8 +15,15 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # Runner sẽ dùng luôn Python và Ansible đã cài sẵn trên máy local của bạn
+      # Runner sẽ dùng luôn Python và Ansible đã cài sẵn trên máy local
       - name: Execute Ansible Playbook
         run: |
           cd ansible
-          ansible-playbook -i inventory.ini site.yml
+          # 1. Trích xuất mật khẩu giải mã từ GitHub Secrets ra một file tạm
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault_pass
+          
+          # 2. Chạy playbook và truyền file pass vào để giải mã group_vars
+          ansible-playbook -i inventory.ini site.yml --vault-password-file .vault_pass
+          
+          # 3. Xóa file tạm ngay lập tức sau khi chạy xong để đảm bảo an ninh
+          rm -f .vault_pass

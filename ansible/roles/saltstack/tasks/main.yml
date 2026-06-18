@@ -99,7 +99,7 @@
   tags: [deploy_master]
 
 # ==============================================================================
-# KHỐI 2.5: TẠO + ĐỒNG BỘ MASTER SIGNING KEY
+# KHỐI 2.5: TẠO + ĐỒNG BỘ MASTER SIGNING KEY (BẢN SỬA ĐỔI CHỊU LỖI HIGH-AVAILABILITY)
 # ==============================================================================
 - name: Prepare Salt master signing key on node1 and sync to node2
   block:
@@ -178,6 +178,8 @@
       run_once: true
       register: copy_priv_to_node2
       no_log: true
+      when: "'master-node-2' in ansible_play_batch"
+      ignore_unreachable: yes
 
     - name: Copy master signing public key to node2
       copy:
@@ -189,6 +191,8 @@
       delegate_to: master-node-2
       run_once: true
       register: copy_pub_to_node2
+      when: "'master-node-2' in ansible_play_batch"
+      ignore_unreachable: yes
 
     - name: Restart salt-master on node1
       systemd:
@@ -204,7 +208,11 @@
         state: restarted
       delegate_to: master-node-2
       run_once: true
-      when: copy_priv_to_node2.changed or copy_pub_to_node2.changed | default(false)
+      when:
+        - "'master-node-2' in ansible_play_batch"
+        - copy_priv_to_node2.unreachable is not defined
+        - (copy_priv_to_node2.changed | default(false)) or (copy_pub_to_node2.changed | default(false))
+      ignore_unreachable: yes
   when:
     - is_master | default(false)
     - inventory_hostname == 'master-node-1'

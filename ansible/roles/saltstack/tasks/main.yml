@@ -277,74 +277,107 @@
   tags: [deploy_minion]
 
 # ==============================================================================
-# KHỐI 3.5: ACCEPT MINION KEY TRÊN CẢ HAI MASTER (AN TOÀN KHI CHẠY LẠI)
+# KHỐI 3.5: ACCEPT MINION KEY TRÊN CẢ HAI MASTER (AN TOÀN TUYỆT ĐỐI KHI CÓ MASTER SẬP)
 # ==============================================================================
-- name: Accept Salt minion key on both masters and verify ping
-  block:
-    # --- BƯỚC 1: KIỂM TRA XEM KEY ĐÃ ĐƯỢC DUYỆT TỪ TRƯỚC CHƯA ---
-    - name: Check accepted keys on master-node-1
-      command: salt-key -l accepted
-      register: accepted_keys_master_1
-      changed_when: false
-      delegate_to: master-node-1
+# --- TIẾN TRÌNH DUYỆT KHÓA TRÊN SALT-MASTER-1 ---
+- name: Check accepted keys on master-node-1
+  command: "salt-key -l accepted"
+  register: accepted_keys_master_1
+  changed_when: false
+  delegate_to: master-node-1
+  when:
+    - is_minion | default(false)
+    - "'master-node-1' in ansible_play_batch"
+  ignore_unreachable: yes
 
-    - name: Check accepted keys on master-node-2
-      command: salt-key -l accepted
-      register: accepted_keys_master_2
-      changed_when: false
-      delegate_to: master-node-2
+- name: Wait until minion key appears on master-node-1
+  command: "salt-key -L"
+  register: salt_key_list_master_1
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: salt_minion_id in salt_key_list_master_1.stdout
+  delegate_to: master-node-1
+  when:
+    - is_minion | default(false)
+    - "'master-node-1' in ansible_play_batch"
+    - accepted_keys_master_1.unreachable is not defined
+    - salt_minion_id not in (accepted_keys_master_1.stdout | default(''))
+  ignore_unreachable: yes
 
-    # --- BƯỚC 2: CHỈ CHỜ VÀ ACCEPT NẾU KEY CHƯA NẰM TRONG DANH SÁCH ACCEPTED ---
-    - name: Wait until minion key appears on master-node-1
-      command: salt-key -L
-      register: salt_key_list_master_1
-      changed_when: false
-      retries: 20
-      delay: 3
-      until: salt_minion_id in salt_key_list_master_1.stdout
-      delegate_to: master-node-1
-      when: salt_minion_id not in accepted_keys_master_1.stdout
+- name: Accept minion key on master-node-1
+  command: "salt-key -a {{ salt_minion_id }} -y"
+  delegate_to: master-node-1
+  when:
+    - is_minion | default(false)
+    - "'master-node-1' in ansible_play_batch"
+    - accepted_keys_master_1.unreachable is not defined
+    - salt_minion_id not in (accepted_keys_master_1.stdout | default(''))
+  ignore_unreachable: yes
 
-    - name: Accept minion key on master-node-1
-      command: salt-key -a {{ salt_minion_id }} -y
-      delegate_to: master-node-1
-      when: salt_minion_id not in accepted_keys_master_1.stdout
+- name: Verify minion ping from master-node-1
+  command: "salt {{ salt_minion_id }} test.ping"
+  register: ping_master_1
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: "'True' in ping_master_1.stdout"
+  delegate_to: master-node-1
+  when:
+    - is_minion | default(false)
+    - "'master-node-1' in ansible_play_batch"
+    - accepted_keys_master_1.unreachable is not defined
+  ignore_unreachable: yes
 
-    - name: Wait until minion key appears on master-node-2
-      command: salt-key -L
-      register: salt_key_list_master_2
-      changed_when: false
-      retries: 20
-      delay: 3
-      until: salt_minion_id in salt_key_list_master_2.stdout
-      delegate_to: master-node-2
-      when: salt_minion_id not in accepted_keys_master_2.stdout
+# --- TIẾN TRÌNH DUYỆT KHÓA TRÊN SALT-MASTER-2 ---
+- name: Check accepted keys on master-node-2
+  command: "salt-key -l accepted"
+  register: accepted_keys_master_2
+  changed_when: false
+  delegate_to: master-node-2
+  when:
+    - is_minion | default(false)
+    - "'master-node-2' in ansible_play_batch"
+  ignore_unreachable: yes
 
-    - name: Accept minion key on master-node-2
-      command: salt-key -a {{ salt_minion_id }} -y
-      delegate_to: master-node-2
-      when: salt_minion_id not in accepted_keys_master_2.stdout
+- name: Wait until minion key appears on master-node-2
+  command: "salt-key -L"
+  register: salt_key_list_master_2
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: salt_minion_id in salt_key_list_master_2.stdout
+  delegate_to: master-node-2
+  when:
+    - is_minion | default(false)
+    - "'master-node-2' in ansible_play_batch"
+    - accepted_keys_master_2.unreachable is not defined
+    - salt_minion_id not in (accepted_keys_master_2.stdout | default(''))
+  ignore_unreachable: yes
 
-    # --- BƯỚC 3: KIỂM TRA PING (LUÔN CHẠY ĐỂ XÁC MINH SỐNG CÒN) ---
-    - name: Verify minion ping from master-node-1
-      command: salt {{ salt_minion_id }} test.ping
-      register: ping_master_1
-      changed_when: false
-      retries: 20
-      delay: 3
-      until: "'True' in ping_master_1.stdout"
-      delegate_to: master-node-1
+- name: Accept minion key on master-node-2
+  command: "salt-key -a {{ salt_minion_id }} -y"
+  delegate_to: master-node-2
+  when:
+    - is_minion | default(false)
+    - "'master-node-2' in ansible_play_batch"
+    - accepted_keys_master_2.unreachable is not defined
+    - salt_minion_id not in (accepted_keys_master_2.stdout | default(''))
+  ignore_unreachable: yes
 
-    - name: Verify minion ping from master-node-2
-      command: salt {{ salt_minion_id }} test.ping
-      register: ping_master_2
-      changed_when: false
-      retries: 20
-      delay: 3
-      until: "'True' in ping_master_2.stdout"
-      delegate_to: master-node-2
-  when: is_minion | default(false)
-  tags: [deploy_minion, accept_minion_key]
+- name: Verify minion ping from master-node-2
+  command: "salt {{ salt_minion_id }} test.ping"
+  register: ping_master_2
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: "'True' in ping_master_2.stdout"
+  delegate_to: master-node-2
+  when:
+    - is_minion | default(false)
+    - "'master-node-2' in ansible_play_batch"
+    - accepted_keys_master_2.unreachable is not defined
+  ignore_unreachable: yes
 
 
 # ==============================================================================
@@ -378,24 +411,30 @@
       meta: flush_handlers
 
     - name: Post-Reconfigure Verification - Verification Ping from Master 1
-      command: salt {{ salt_minion_id }} test.ping
+      command: "salt {{ salt_minion_id }} test.ping"
       register: reconfig_ping_1
       changed_when: false
       retries: 10
       delay: 2
       until: "'True' in reconfig_ping_1.stdout"
       delegate_to: master-node-1
-      when: is_minion | default(false)
+      when:
+        - is_minion | default(false)
+        - "'master-node-1' in ansible_play_batch"
+      ignore_unreachable: yes
 
     - name: Post-Reconfigure Verification - Verification Ping from Master 2
-      command: salt {{ salt_minion_id }} test.ping
+      command: "salt {{ salt_minion_id }} test.ping"
       register: reconfig_ping_2
       changed_when: false
       retries: 10
       delay: 2
       until: "'True' in reconfig_ping_2.stdout"
       delegate_to: master-node-2
-      when: is_minion | default(false)
+      when:
+        - is_minion | default(false)
+        - "'master-node-2' in ansible_play_batch"
+      ignore_unreachable: yes
   tags: [reconfigure]
 
 # ==============================================================================

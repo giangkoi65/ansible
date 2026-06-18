@@ -481,34 +481,53 @@
     state: restarted
   when: is_minion | default(false)
 
-- name: Wait 5 seconds for minion reconnect after force restart
-  pause:
-    seconds: 5
+# --- ĐỊNH VỊ LIVE MASTER DỰA TRÊN THỰC TẾ CLUSTER ---
+- name: Dynamically determine active Salt Master
+  set_fact:
+    chosen_salt_master: "{{ 'master-node-1' if 'master-node-1' in ansible_play_batch else ('master-node-2' if 'master-node-2' in ansible_play_batch else 'none') }}"
   when: is_minion | default(false)
 
-# BƯỚC KÍCH HOẠT (CƠ CHẾ CHỊU LỖI HIGH-AVAILABILITY)
-- name: High-Availability Salt Trigger Deployment
-  block:
-    - name: "[INFO] Attemping to trigger deployment via SALT-MASTER-1"
-      debug:
-        msg: "CI/CD Pipeline đang gọi trực tiếp máy 'master-node-1' để thực thi lệnh 'salt state.apply'"
-      when: "'master-node-1' in ansible_play_batch"
+# --- THÔNG BÁO TRẠNG THÁI CHÍNH XÁC ---
+- name: "[NOTICE] Alert Cluster Health - Master 2 is Offline"
+  debug:
+    msg: "Phát hiện 'master-node-2' đang ĐÓNG BĂNG (DOWN). Mọi tác vụ điều phối sẽ chạy qua 'master-node-1'."
+  when: 
+    - is_minion | default(false)
+    - "'master-node-2' not in ansible_play_batch"
+    - chosen_salt_master == 'master-node-1'
 
-    - name: Trigger Salt Master 1 to deploy Nginx and Website on Minion
-      command: "salt '{{ salt_minion_id }}' state.apply nginx"
-      delegate_to: master-node-1
-      when: "'master-node-1' in ansible_play_batch"
+- name: "[WARNING] Alert Cluster Health - Master 1 is Offline! Falling back"
+  debug:
+    msg: "Phát hiện 'master-node-1' đang DOWN! Hệ thống tự động kích hoạt chế độ Failover sang 'master-node-2'."
+  when: 
+    - is_minion | default(false)
+    - "'master-node-1' not in ansible_play_batch"
+    - chosen_salt_master == 'master-node-2'
 
-  rescue:
-    - name: "[WARNING] SALT-MASTER-1 is DOWN! Switching to Failover Node"
-      debug:
-        msg: "Master 1 không phản hồi hoặc gặp sự cố. Tự động chuyển hướng CI/CD sang 'master-node-2'..."
-      when: "'master-node-2' in ansible_play_batch"
+- name: "[CRITICAL] All Salt Masters are DOWN"
+  fail:
+    msg: "Không thể tiếp tục hạ tầng! Cả hai Salt Master đều không phản hồi kết nối SSH."
+  when: 
+    - is_minion | default(false)
+    - chosen_salt_master == 'none'
 
-    - name: Trigger Salt Master 2 to deploy Nginx and Website on Minion (Failover)
-      command: "salt '{{ salt_minion_id }}' state.apply nginx"
-      delegate_to: master-node-2
-      when: "'master-node-2' in ansible_play_batch"
-      ignore_unreachable: yes
+# --- ĐẢM BẢO MINION ĐÃ ONLINE TRỞ LẠI SAU KHI RESTART (CHỐNG LỖI NO RESPONSE) ---
+- name: Wait for Salt Minion to handshake successfully with Chosen Master
+  command: "salt '{{ salt_minion_id }}' test.ping"
+  delegate_to: "{{ chosen_salt_master }}"
+  register: minion_health
+  until: "'True' in minion_health.stdout"
+  retries: 6
+  delay: 5
+  when: 
+    - is_minion | default(false)
+    - chosen_salt_master != 'none'
+  ignore_errors: yes
 
-  when: is_minion | default(false)
+# --- CHẠY DEPLOY CHÍNH THỨC TRÊN MASTER ĐƯỢC CHỌN ---
+- name: Trigger Salt Master to deploy Nginx and Website on Minion
+  command: "salt '{{ salt_minion_id }}' state.apply nginx"
+  delegate_to: "{{ chosen_salt_master }}"
+  when: 
+    - is_minion | default(false)
+    - chosen_salt_master != 'none'

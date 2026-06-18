@@ -474,7 +474,19 @@
     fi
   when: is_minion | default(false)
 
-# BƯỚC KÍCH HOẠT (ĐÃ TỐI ƯU HÓA CƠ CHẾ CHỊU LỖI HIGH-AVAILABILITY)
+# --- FORCE RESTART MINION ĐỂ GIẢI PHÓNG LOCK TRƯỚC KHI DEPLOY ---
+- name: Force restart salt-minion to clear any stuck ghost processes
+  systemd:
+    name: salt-minion
+    state: restarted
+  when: is_minion | default(false)
+
+- name: Wait 5 seconds for minion reconnect after force restart
+  pause:
+    seconds: 5
+  when: is_minion | default(false)
+
+# BƯỚC KÍCH HOẠT (CƠ CHẾ CHỊU LỖI HIGH-AVAILABILITY)
 - name: High-Availability Salt Trigger Deployment
   block:
     - name: "[INFO] Attemping to trigger deployment via SALT-MASTER-1"

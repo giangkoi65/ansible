@@ -474,12 +474,31 @@
     fi
   when: is_minion | default(false)
 
-# --- FORCE RESTART MINION ĐỂ GIẢI PHÓNG LOCK TRƯỚC KHI DEPLOY ---
+# --- KIỂM TRA XEM CÓ TIẾN TRÌNH SALT NÀO ĐANG CHẠY HOẶC BỊ TREO KHÔNG ---
+- name: Check for any active or stuck Salt jobs on Minion
+  find:
+    paths: /var/cache/salt/minion/proc/
+    file_type: file
+  register: stuck_salt_jobs
+  when: is_minion | default(false)
+
+# --- CHỈ RESTART KHI PHÁT HIỆN CÓ FILE TRONG THƯ MỤC PROC (STUCK JOBS) ---
 - name: Force restart salt-minion to clear any stuck ghost processes
   systemd:
     name: salt-minion
     state: restarted
-  when: is_minion | default(false)
+  when: 
+    - is_minion | default(false)
+    - stuck_salt_jobs.matched > 0
+  register: minion_restart_status
+
+# --- CHỈ TẠM DỪNG 5 GIÂY NẾU TRƯỚC ĐÓ CÓ HÀNH ĐỘNG RESTART ---
+- name: Wait 5 seconds for minion reconnect after force restart
+  pause:
+    seconds: 5
+  when: 
+    - is_minion | default(false)
+    - minion_restart_status.changed
 
 # --- ĐỊNH VỊ LIVE MASTER DỰA TRÊN THỰC TẾ CLUSTER ---
 - name: Dynamically determine active Salt Master

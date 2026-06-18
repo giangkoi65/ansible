@@ -480,19 +480,23 @@
     - name: "[INFO] Attemping to trigger deployment via SALT-MASTER-1"
       debug:
         msg: "CI/CD Pipeline đang gọi trực tiếp máy 'master-node-1' để thực thi lệnh 'salt state.apply'"
+      when: "'master-node-1' in ansible_play_batch"
 
     - name: Trigger Salt Master 1 to deploy Nginx and Website on Minion
       command: "salt '{{ salt_minion_id }}' state.apply nginx"
       delegate_to: master-node-1
+      when: "'master-node-1' in ansible_play_batch"
 
   rescue:
     - name: "[WARNING] SALT-MASTER-1 is DOWN! Switching to Failover Node"
       debug:
         msg: "Master 1 không phản hồi hoặc gặp sự cố. Tự động chuyển hướng CI/CD sang 'master-node-2'..."
+      when: "'master-node-2' in ansible_play_batch"
 
     - name: Trigger Salt Master 2 to deploy Nginx and Website on Minion (Failover)
       command: "salt '{{ salt_minion_id }}' state.apply nginx"
       delegate_to: master-node-2
+      when: "'master-node-2' in ansible_play_batch"
+      ignore_unreachable: yes
 
-  run_once: true
   when: is_minion | default(false)
